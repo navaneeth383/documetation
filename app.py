@@ -47,6 +47,14 @@ def extract_from_ipynb(uploaded):
     (body, _) = exporter.from_notebook_node(nb)
     return body
 
+def safe_add_code(doc, content):
+    cleaned = clean_code(content)
+    for block in cleaned.split('\n'):
+        try:
+            doc.add_paragraph(block)
+        except Exception:
+            doc.add_paragraph("[Error displaying this line due to encoding issues]")
+
 if generate_button and uploaded_files:
     doc = docx.Document()
     doc.add_heading("Project Documentation", 0)
@@ -69,12 +77,12 @@ if generate_button and uploaded_files:
         elif extension == '.ipynb':
             doc.add_heading(f"Notebook: {filename}", level=1)
             content = extract_from_ipynb(uploaded)
-            doc.add_paragraph(clean_code(content))
+            safe_add_code(doc, content)
         else:
             content = uploaded.read().decode(errors='ignore')
             code_type = detect_code_type(content)
             doc.add_heading(f"{code_type} File: {filename}", level=1)
-            doc.add_paragraph(clean_code(content))
+            safe_add_code(doc, content)
 
     if custom_notes:
         doc.add_page_break()
