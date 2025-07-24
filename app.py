@@ -1,107 +1,84 @@
 import streamlit as st
-import docx
+from docx import Document
 from docx.shared import Inches
+import base64
 import os
-import tempfile
 from io import BytesIO
-import nbformat
-from nbconvert import PythonExporter
-import re
-from docx.oxml.ns import qn
-from docx.oxml import OxmlElement
+import zipfile
 
-st.set_page_config(page_title="📘 Project Documentation Generator", layout="wide")
+st.set_page_config(page_title="Project Doc Generator", layout="wide")
 
-st.title("📘 Project Documentation Generator")
-st.markdown("""
-### Created by Gattu Navaneeth Rao
-Upload your project code, screenshots, and supporting files to generate a detailed project-level documentation.
-""")
+# ----------------- Sidebar -----------------
+st.sidebar.title("📄 Project Documentation Generator")
+st.sidebar.markdown("Created by **Gattu Navaneeth Rao**")
 
-st.markdown("---")
+# ----------------- Main UI -----------------
+st.title("📝 AI-Powered Project Documentation Generator")
 
-uploaded_files = st.file_uploader(
-    "📂 Upload Project Files (.py, .sql, .ipynb, .txt, images, excels, etc)",
-    accept_multiple_files=True
+project_title = st.text_input("Enter Project Title", "AI Project Documentation")
+
+user_notes = st.text_area("✍️ Add any specific text you'd like to include in the documentation")
+
+uploaded_code_files = st.file_uploader(
+    "📂 Upload Code Files (.py, .sql, .ipynb, .txt)", accept_multiple_files=True
 )
 
-custom_notes = st.text_area("📝 Additional Notes to Include in Document")
+uploaded_support_files = st.file_uploader(
+    "🧾 Upload Supporting Files (images, excel, screenshots etc.)", accept_multiple_files=True
+)
 
-generate_button = st.button("📄 Generate Documentation")
-
-def detect_code_type(code):
-    if "SELECT" in code.upper() or "CREATE TABLE" in code.upper():
-        return "SQL"
-    elif "def " in code or "import " in code:
+# ----------------- Utility Functions -----------------
+def detect_language(content):
+    if "import " in content or "def " in content:
         return "Python"
+    elif "SELECT " in content.upper():
+        return "SQL"
+    elif "nbformat" in content:
+        return "Jupyter Notebook"
     else:
         return "Text"
 
 def clean_code(text):
-    return re.sub(r'\n+', '\n', text.strip())
+    return text.replace('\r', '').replace('\t', '    ')
 
-def extract_from_ipynb(uploaded):
-    content = uploaded.read()
-    nb = nbformat.reads(content.decode("utf-8"), as_version=4)
-    exporter = PythonExporter()
-    (body, _) = exporter.from_notebook_node(nb)
-    return body
+# ----------------- Document Generation -----------------
+if st.button("📘 Create Documentation"):
+    doc = Document()
 
-def safe_add_code(doc, content):
-    cleaned = clean_code(content)
-    for block in cleaned.split('\n'):
-        try:
-            doc.add_paragraph(block)
-        except Exception:
-            doc.add_paragraph("[Error displaying this line due to encoding issues]")
+    doc.add_heading(project_title, 0)
+    doc.add_paragraph(f"Author: Gattu Navaneeth Rao")
 
-if generate_button and uploaded_files:
-    doc = docx.Document()
-    doc.add_heading("Project Documentation", 0)
-    doc.add_paragraph("Author: Gattu Navaneeth Rao")
-    doc.add_paragraph("\n")
-    doc.add_paragraph("Table of Contents")
-    doc.add_paragraph("\n")
+    if user_notes:
+        doc.add_heading("Project Notes", level=1)
+        doc.add_paragraph(user_notes)
 
-    for uploaded in uploaded_files:
-        filename = uploaded.name
-        extension = os.path.splitext(filename)[-1].lower()
+    if uploaded_code_files:
+        doc.add_heading("Code Files", level=1)
+        for file in uploaded_code_files:
+            content = file.read().decode("utf-8", errors="ignore")
+            lang = detect_language(content)
+            doc.add_heading(f"{file.name} ({lang})", level=2)
+            paragraph = doc.add_paragraph()
+            run = paragraph.add_run(clean_code(content))
+            run.font.name = 'Courier New'
 
-        if extension in ['.png', '.jpg', '.jpeg']:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as tmp_file:
-                tmp_file.write(uploaded.read())
-                tmp_path = tmp_file.name
-            doc.add_heading(f"Screenshot: {filename}", level=1)
-            doc.add_picture(tmp_path, width=Inches(5.5))
-            os.unlink(tmp_path)
-        elif extension == '.ipynb':
-            doc.add_heading(f"Notebook: {filename}", level=1)
-            content = extract_from_ipynb(uploaded)
-            safe_add_code(doc, content)
-        else:
-            content = uploaded.read().decode(errors='ignore')
-            code_type = detect_code_type(content)
-            doc.add_heading(f"{code_type} File: {filename}", level=1)
-            safe_add_code(doc, content)
+    if uploaded_support_files:
+        doc.add_heading("Supporting Files", level=1)
+        for file in uploaded_support_files:
+            if file.type.startswith("image/"):
+                image_stream = BytesIO(file.read())
+                doc.add_picture(image_stream, width=Inches(5))
+                doc.add_paragraph(f"Screenshot: {file.name}")
+            else:
+                doc.add_paragraph(f"Attached File: {file.name}")
 
-    if custom_notes:
-        doc.add_page_break()
-        doc.add_heading("Additional Notes", level=1)
-        doc.add_paragraph(custom_notes)
+    # ----------------- Save and Download -----------------
+    buffer = BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
 
-    doc.add_page_break()
-    doc.add_paragraph("\nGenerated using Streamlit by Gattu Navaneeth Rao")
+    st.success("✅ Documentation created successfully!")
 
-    output = BytesIO()
-    doc.save(output)
-    output.seek(0)
-
-    st.success("📄 Documentation generated successfully!")
-    st.download_button(
-        label="📥 Download Project_Documentation.docx",
-        data=output,
-        file_name="Project_Documentation.docx",
-        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    )
-else:
-    st.info("Upload at least one file and click Generate Documentation to start.")
+    b64 = base64.b64encode(buffer.read()).decode()
+    href = f'<a href="data:application/octet-stream;base64,{b64}" download="project_documentation.docx">📥 Download .docx</a>'
+    st.markdown(href, unsafe_allow_html=True)
